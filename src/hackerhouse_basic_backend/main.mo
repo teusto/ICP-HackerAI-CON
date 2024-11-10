@@ -5,22 +5,86 @@ import Array "mo:base/Array";
 import Blob "mo:base/Blob";
 import Text "mo:base/Text";
 import Cycles "mo:base/ExperimentalCycles";
+import Debug "mo:base/Debug";
+import Map "mo:map/Map";
+import {phash; nhash} "mo:map/Map";
+import Nat "mo:base/Nat";
+import Vector "mo:vector";
 
 actor {
+    type UserProfile = {name: Text};
+    stable var autoIndex = 0;
+    let userIdMap = Map.new<Principal, Nat>();
+    let userProfileMap = Map.new<Nat, Text>();
+    let userResultsMap = Map.new<Nat, Vector.new<text>()>();
+
     public query ({ caller }) func getUserProfile() : async Result.Result<{ id : Nat; name : Text }, Text> {
-        return #ok({ id = 123; name = "test" });
+        switch (Map.get(userIdMap, phash, caller)) {
+        case (?userId) {
+            switch (Map.get(userProfileMap, nhash, userId)) {
+                case (?userProfile) {
+                    #ok({ id = userId; name = userProfile })
+                };
+                case (_) {
+                    #err("User profile not found")
+                };
+            };
+        };
+        case (_) {
+            #err("User not found")
+        };
+    };
     };
 
     public shared ({ caller }) func setUserProfile(name : Text) : async Result.Result<{ id : Nat; name : Text }, Text> {
-        return #ok({ id = 123; name = "test" });
+        // check if user exists
+        switch(Map.get(userIdMap, phash, caller)){
+            case (?_) {};
+            // this is for everything else besides what i want
+            case(_) {
+                Map.set(userIdMap, phash, caller, autoIndex);
+                autoIndex += 1;
+            };
+        };
+
+        let foundId = switch(Map.get(userIdMap, phash, caller)){
+            case(?found) found;
+            case(_) return #err("User not found");
+        };
+        
+        Map.set(userProfileMap, nhash, foundId, name);   
+
+        return #ok({ id = foundId; name = name });
     };
 
     public shared ({ caller }) func addUserResult(result : Text) : async Result.Result<{ id : Nat; results : [Text] }, Text> {
-        return #ok({ id = 123; results = ["fake result"] });
+        let userId = switch (Map.get(userIdMap, phash, caller)){
+            case(?found) found;
+            case (_) return #err("User not found");
+        }
+
+        let results = switch(Map.get(userResultsMap, nhash, userId)){
+            case(?found) found;
+            case(_) Vector.new<Text>();
+        }
+
+        Vector.add(results, result);
+        Map.set(userResultsMap, nhash, userId, results);
+        return #ok({ id = userId; results = Vector.toArray(results) });
     };
 
     public query ({ caller }) func getUserResults() : async Result.Result<{ id : Nat; results : [Text] }, Text> {
-        return #ok({ id = 123; results = ["fake result"] });
+        let userId = switch(Map.get(userIdMap, phash, caller)) {
+            case(?found) found;
+            case(_) return #err("User not found");
+        };
+
+        let results = switch(Map.get(userResultsMap, nhash, userId)) {
+            case(?found) Vector.toArray(found);
+            case(_) [];
+        };
+
+        return #ok({ id = userId; results = results })
     };
 
     public func outcall_ai_model_for_sentiment_analysis(paragraph : Text) : async Result.Result<{ paragraph : Text; result : Text }, Text> {
